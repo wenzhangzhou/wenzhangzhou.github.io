@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>猪猪专用 · 实时画面</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #111; color: #eee; min-height: 100vh; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 16px 12px calc(16px + env(safe-area-inset-bottom)); }
+  h1 { font-size: 18px; font-weight: 600; margin: 4px 0 14px; text-align: center; }
+  .card { background: #1d1d1f; border-radius: 12px; padding: 22px 18px; max-width: 360px; margin: 12vh auto 0; }
+  .card label { display: block; font-size: 14px; color: #aaa; margin-bottom: 8px; }
+  input[type=password] { width: 100%; font-size: 17px; padding: 11px 12px; border-radius: 8px; border: 1px solid #444;
+         background: #111; color: #fff; outline: none; }
+  input[type=password]:focus { border-color: #2f7cf6; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 12px 0 16px; font-size: 14px; color: #bbb; }
+  button { font-size: 16px; padding: 10px 16px; border-radius: 8px; border: 0; background: #2f7cf6; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
+  button.ghost { background: #2c2c2e; }
+  button.on { background: #2f7cf6; }
+  .full { width: 100%; }
+  .msg { min-height: 20px; font-size: 14px; color: #ff6b6b; margin-top: 10px; text-align: center; }
+  .msg.info { color: #9aa; }
+  #view { display: none; }
+  #stage { width: 100%; background: #000; border-radius: 8px; overflow: hidden; position: relative; }
+  #player { width: 100%; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
+  .bar button { min-width: 76px; }
+  .tip { font-size: 12px; color: #777; text-align: center; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🐷 猪猪专用 · 实时画面</h1>
+
+  <form id="login" class="card" autocomplete="on">
+    <label for="pw">请输入访问密码</label>
+    <input id="pw" type="password" autocomplete="current-password" required>
+    <div class="row"><input id="remember" type="checkbox" checked><label for="remember" style="margin:0">在此设备上记住登录（30 天）</label></div>
+    <button id="go" class="full" type="submit">进入</button>
+    <div id="lmsg" class="msg"></div>
+  </form>
+
+  <div id="view">
+    <div id="stage"><div id="player"></div></div>
+    <div class="bar">
+      <button id="bHd" class="ghost" type="button">高清</button>
+      <button id="bSd" class="ghost" type="button">流畅</button>
+      <button id="bRe" class="ghost" type="button">刷新</button>
+      <button id="bOut" class="ghost" type="button">退出</button>
+    </div>
+    <div id="vmsg" class="msg info"></div>
+    <div class="tip">画面加载需几秒；如长时间黑屏，请点“刷新”或切换“流畅”。</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var API = "https://vazjdvmvnoypmswqotlz.supabase.co/functions/v1/pigcam";
+  var SDK = [
+    "https://openstatic.ys7.com/ezuikit_js/v9.0.22/ezuikit.js",
+    "https://cdn.jsdelivr.net/npm/ezuikit-js@9.0.23/ezuikit.js",
+    "https://unpkg.com/ezuikit-js@9.0.23/ezuikit.js"
+  ];
+  var KEY = "pigcam_session";
+  var isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+  var $ = function (id) { return document.getElementById(id); };
+  var info = null, player = null, hd = !isMobile, busy = false;
+
+  function getSession() { return localStorage.getItem(KEY) || sessionStorage.getItem(KEY); }
+  function setSession(tok, remember) {
+    localStorage.removeItem(KEY); sessionStorage.removeItem(KEY);
+    if (tok) (remember ? localStorage : sessionStorage).setItem(KEY, tok);
+  }
+  function api(path, body) {
+    return fetch(API + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, error: "服务器返回异常 (" + r.status + ")" }; }); })
+      .catch(function () { return { ok: false, error: "网络连接失败，请检查网络后重试", net: true }; });
+  }
+
+  var sdkPromise = null;
+  function loadSdk() {
+    if (window.EZUIKit) return Promise.resolve();
+    if (sdkPromise) return sdkPromise;
+    sdkPromise = new Promise(function (resolve, reject) {
+      var i = 0;
+      (function next() {
+        if (i >= SDK.length) { sdkPromise = null; return reject(new Error("播放器组件加载失败")); }
+        var s = document.createElement("script");
+        s.src = SDK[i++]; s.async = true;
+        s.onload = function () { window.EZUIKit ? resolve() : next(); };
+        s.onerror = function () { s.remove(); next(); };
+        document.head.appendChild(s);
+      })();
+    });
+    return sdkPromise;
+  }
+
+  function size() {
+    var w = Math.floor($("stage").clientWidth || window.innerWidth - 24);
+    return { w: w, h: Math.round(w * 9 / 16) };
+  }
+  function destroy() {
+    if (player) { try { var p = player.destroy(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+    player = null; $("player").innerHTML = "";
+  }
+  function msg(el, t, isInfo) { $(el).textContent = t || ""; $(el).className = "msg" + (isInfo ? " info" : ""); }
+  function markQuality() { $("bHd").className = hd ? "on" : "ghost"; $("bSd").className = hd ? "ghost" : "on"; }
+
+  function play() {
+    if (!info) return;
+    markQuality();
+    msg("vmsg", "正在连接摄像头…", true);
+    loadSdk().then(function () {
+      destroy();
+      var s = size();
+      player = new EZUIKit.EZUIKitPlayer({
+        id: "player",
+        accessToken: info.accessToken,
+        url: hd ? info.urls.hd : info.urls.sd,
+        template: isMobile ? "mobileLive" : "pcLive",
+        width: s.w, height: s.h,
+        handleSuccess: function () { msg("vmsg", ""); },
+        handleError: function (err) {
+          var code = err && err.data && (err.data.nErrorCode || err.data.code);
+          if (err && err.type === "handleRunTimeInfoError" && code === 5) msg("vmsg", "设备视频加密验证码不正确");
+          else msg("vmsg", "播放出错" + (code ? "（" + code + "）" : "") + "，可点“刷新”重试");
+        }
+      });
+      setTimeout(function () { if ($("vmsg").textContent === "正在连接摄像头…") msg("vmsg", ""); }, 8000);
+    }).catch(function (e) { msg("vmsg", e.message + "，请点“刷新”重试"); });
+  }
+
+  function showView() { $("login").style.display = "none"; $("view").style.display = "block"; play(); }
+  function showLogin(t) { destroy(); info = null; $("view").style.display = "none"; $("login").style.display = "block"; msg("lmsg", t || ""); }
+
+  $("login").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    if (busy) return;
+    var pw = $("pw").value; if (!pw) return;
+    busy = true; $("go").disabled = true; msg("lmsg", "验证中…", true);
+    loadSdk().catch(function () {}); // warm up player download in parallel
+    var remember = $("remember").checked;
+    api("/login", { password: pw, remember: true }).then(function (r) {
+      busy = false; $("go").disabled = false;
+      if (!r.ok) { msg("lmsg", r.error || "登录失败"); return; }
+      $("pw").value = ""; msg("lmsg", "");
+      setSession(r.session, remember);
+      info = r; showView();
+    });
+  });
+
+  function refresh() {
+    var tok = getSession();
+    if (!tok) { play(); return; }
+    $("bRe").disabled = true;
+    api("/session", { session: tok }).then(function (r) {
+      $("bRe").disabled = false;
+      if (r.ok) { info = r; play(); }
+      else if (r.net && info) { play(); }
+      else { setSession(null); showLogin(r.error); }
+    });
+  }
+  $("bHd").onclick = function () { if (!hd) { hd = true; play(); } };
+  $("bSd").onclick = function () { if (hd) { hd = false; play(); } };
+  $("bRe").onclick = refresh;
+  $("bOut").onclick = function () { setSession(null); showLogin("已退出"); };
+
+  var rt = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(rt);
+    rt = setTimeout(function () { if (player && player.resize) { var s = size(); try { player.resize(s.w, s.h); } catch (e) {} } }, 300);
+  });
+
+  // auto-login with remembered session
+  var tok = getSession();
+  if (tok) {
+    msg("lmsg", "正在自动登录…", true);
+    api("/session", { session: tok }).then(function (r) {
+      if (r.ok) { msg("lmsg", ""); info = r; showView(); }
+      else { if (!r.net) setSession(null); msg("lmsg", r.net ? r.error : ""); }
+    });
+  }
+})();
+</script>
+</body>
+</html>
